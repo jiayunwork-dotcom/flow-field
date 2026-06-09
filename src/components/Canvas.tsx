@@ -3,6 +3,16 @@ import { useAppStore } from '../store/useAppStore';
 import { FlowFieldRenderer } from '../gl/FlowFieldRenderer';
 import type { FieldElement } from '../store/types';
 
+let nextId = 1;
+function genId() { return `el_${nextId++}_${Date.now()}`; }
+
+const ELEMENT_DEFAULTS: Record<FieldElement['type'], { strength: number; angle?: number }> = {
+  source: { strength: 0.5 },
+  sink: { strength: 0.5 },
+  vortex: { strength: 0.5 },
+  uniform: { strength: 0.3, angle: 0 },
+};
+
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<FlowFieldRenderer | null>(null);
@@ -20,11 +30,11 @@ export function Canvas() {
     return unsub;
   }, []);
 
-  const fieldElements = useAppStore((s) => s.fieldElements);
   const addElement = useAppStore((s) => s.addElement);
   const updateElement = useAppStore((s) => s.updateElement);
   const removeElement = useAppStore((s) => s.removeElement);
   const selectElement = useAppStore((s) => s.selectElement);
+  const setPlacementMode = useAppStore((s) => s.setPlacementMode);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -137,21 +147,38 @@ export function Canvas() {
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const [nx, ny] = screenToNorm(e.clientX, e.clientY);
-    const hit = findElementAt(nx, ny);
+    const state = useAppStore.getState();
 
     if (e.button === 2) {
       e.preventDefault();
+      const hit = findElementAt(nx, ny);
       if (hit) removeElement(hit.id);
       return;
     }
 
+    if (state.placementMode) {
+      const defaults = ELEMENT_DEFAULTS[state.placementMode];
+      const el: FieldElement = {
+        id: genId(),
+        type: state.placementMode,
+        x: nx,
+        y: ny,
+        strength: defaults.strength,
+        angle: defaults.angle,
+      };
+      addElement(el);
+      selectElement(el.id);
+      return;
+    }
+
+    const hit = findElementAt(nx, ny);
     if (hit) {
       selectElement(hit.id);
       dragRef.current = { id: hit.id, offsetX: nx - hit.x, offsetY: ny - hit.y };
     } else {
       selectElement(null);
     }
-  }, [screenToNorm, findElementAt, removeElement, selectElement]);
+  }, [screenToNorm, findElementAt, removeElement, selectElement, addElement, setPlacementMode]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!dragRef.current) return;
@@ -170,6 +197,8 @@ export function Canvas() {
     e.preventDefault();
   }, []);
 
+  const placementMode = useAppStore((s) => s.placementMode);
+
   return (
     <div ref={containerRef} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
       <canvas
@@ -182,7 +211,7 @@ export function Canvas() {
           width: 1024,
           height: 1024,
           background: '#0a0a12',
-          cursor: 'crosshair',
+          cursor: placementMode ? 'crosshair' : 'default',
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}

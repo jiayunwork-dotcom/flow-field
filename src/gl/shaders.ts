@@ -28,7 +28,7 @@ uniform vec4 u_presets[5];
 uniform int u_presetFormulaType[5];
 
 uniform int u_customCount;
-uniform vec4 u_customParams[4];
+uniform sampler2D u_customFieldTexture;
 uniform float u_customActive[4];
 
 in vec2 v_uv;
@@ -75,10 +75,7 @@ vec2 evalField(vec2 p) {
     for (int i = 0; i < 4; i++) {
         if (i >= u_customCount) break;
         if (u_customActive[i] > 0.5) {
-            vel += vec2(
-                u_customParams[i].x * p.x + u_customParams[i].y * p.y,
-                u_customParams[i].z * p.x + u_customParams[i].w * p.y
-            );
+            vel += texture(u_customFieldTexture, v_uv).xy;
         }
     }
     for (int i = 0; i < 16; i++) {
@@ -197,7 +194,7 @@ void main() {
     float speed = length(fieldData.xy);
     float t = clamp((speed - u_colormapRange.x) / (u_colormapRange.y - u_colormapRange.x + 0.0001), 0.0, 1.0);
     vec3 color = texture(u_colormapTexture, vec2(t, 0.5)).rgb;
-    fragColor = vec4(color, v_alpha * 0.85);
+    fragColor = vec4(color * v_alpha, v_alpha);
 }
 `;
 
@@ -246,11 +243,13 @@ void main() {
 `;
 
 export const TRAIL_FADE_FS = COMMON_HEADER + `
+uniform sampler2D u_trailTexture;
 uniform float u_fadeAmount;
 in vec2 v_uv;
 out vec4 fragColor;
 void main() {
-    fragColor = vec4(0.0, 0.0, 0.0, u_fadeAmount);
+    vec4 c = texture(u_trailTexture, v_uv);
+    fragColor = vec4(c.rgb * u_fadeAmount, 1.0);
 }
 `;
 
@@ -377,5 +376,31 @@ void main() {
 
     float val = (weightSum > 0.0) ? sum / weightSum : 0.5;
     fragColor = vec4(vec3(val), 1.0);
+}
+`;
+
+export const STREAMLINE_VS = COMMON_HEADER + `
+in vec2 a_position;
+in float a_speed;
+uniform vec2 u_colormapRange;
+out float v_speed;
+out float v_alpha;
+void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_speed = a_speed;
+    v_alpha = 1.0;
+}
+`;
+
+export const STREAMLINE_FS = COMMON_HEADER + `
+uniform sampler2D u_colormapTexture;
+uniform vec2 u_colormapRange;
+in float v_speed;
+in float v_alpha;
+out vec4 fragColor;
+void main() {
+    float t = clamp((v_speed - u_colormapRange.x) / (u_colormapRange.y - u_colormapRange.x + 0.0001), 0.0, 1.0);
+    vec3 color = texture(u_colormapTexture, vec2(t, 0.5)).rgb;
+    fragColor = vec4(color, v_alpha * 0.9);
 }
 `;

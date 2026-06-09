@@ -1,9 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import type { FieldElement } from '../store/types';
-
-let nextId = 1;
-function genId() { return `el_${nextId++}_${Date.now()}`; }
 
 const ELEMENT_TYPES: Array<{ type: FieldElement['type']; label: string; icon: string; defaultStrength: number }> = [
   { type: 'source', label: '源点', icon: '⊕', defaultStrength: 0.5 },
@@ -15,45 +12,43 @@ const ELEMENT_TYPES: Array<{ type: FieldElement['type']; label: string; icon: st
 export function ElementPanel() {
   const fieldElements = useAppStore((s) => s.fieldElements);
   const selectedElementId = useAppStore((s) => s.selectedElementId);
-  const addElement = useAppStore((s) => s.addElement);
   const updateElement = useAppStore((s) => s.updateElement);
   const removeElement = useAppStore((s) => s.removeElement);
   const selectElement = useAppStore((s) => s.selectElement);
+  const placementMode = useAppStore((s) => s.placementMode);
+  const setPlacementMode = useAppStore((s) => s.setPlacementMode);
 
-  const handleAdd = useCallback((type: FieldElement['type']) => {
-    const preset = ELEMENT_TYPES.find((t) => t.type === type)!;
-    const el: FieldElement = {
-      id: genId(),
-      type,
-      x: (Math.random() - 0.5) * 1.2,
-      y: (Math.random() - 0.5) * 1.2,
-      strength: preset.defaultStrength,
-      angle: type === 'uniform' ? 0 : undefined,
-    };
-    addElement(el);
-    selectElement(el.id);
-  }, [addElement, selectElement]);
+  const handleSelectType = useCallback((type: FieldElement['type']) => {
+    if (placementMode === type) {
+      setPlacementMode(null);
+    } else {
+      setPlacementMode(type);
+    }
+  }, [placementMode, setPlacementMode]);
 
   const selected = fieldElements.find((e) => e.id === selectedElementId);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ fontWeight: 600, fontSize: 13, color: '#ccc', marginBottom: 4 }}>交互元素</div>
+      <div style={{ fontSize: 10, color: placementMode ? '#8af' : '#666', marginBottom: 2 }}>
+        {placementMode ? `点击画布放置${ELEMENT_TYPES.find(t => t.type === placementMode)?.label ?? ''}` : '选择元素类型后在画布上点击放置'}
+      </div>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {ELEMENT_TYPES.map(({ type, label, icon }) => (
           <button
             key={type}
-            onClick={() => handleAdd(type)}
+            onClick={() => handleSelectType(type)}
             style={{
-              background: '#2a2a3a',
-              border: '1px solid #444',
+              background: placementMode === type ? '#2a4a6a' : '#2a2a3a',
+              border: `1px solid ${placementMode === type ? '#5a8aba' : '#444'}`,
               borderRadius: 4,
-              color: '#ddd',
+              color: placementMode === type ? '#fff' : '#ddd',
               padding: '4px 8px',
               cursor: 'pointer',
               fontSize: 12,
             }}
-            title={`添加${label}`}
+            title={`选择后在画布点击放置${label}`}
           >
             {icon} {label}
           </button>
@@ -148,7 +143,7 @@ export function ElementPanel() {
       )}
 
       <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>
-        右键删除元素 | 拖拽移动元素
+        选择类型→点击画布放置 | 右键删除 | 拖拽移动
       </div>
     </div>
   );

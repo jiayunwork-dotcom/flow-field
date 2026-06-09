@@ -49,6 +49,7 @@ interface AppStore extends AppState {
   clearSeedPoints: () => void;
   setLicParams: (stepSize?: number, kernelLength?: number) => void;
   setArrowSpacing: (spacing: number) => void;
+  setPlacementMode: (mode: FieldElement['type'] | null) => void;
   undo: () => void;
   redo: () => void;
   canUndo: () => boolean;
@@ -155,6 +156,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   licStepSize: 0.005,
   licKernelLength: 20,
   arrowSpacing: 30,
+  placementMode: null,
 
   addElement: (element) =>
     set((s) => {
@@ -288,6 +290,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   setArrowSpacing: (spacing) => set({ arrowSpacing: spacing }),
+
+  setPlacementMode: (mode) => set({ placementMode: mode }),
 
   undo: () => {
     if (historyIndex <= 0) return;

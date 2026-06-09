@@ -76,4 +76,5 @@ export interface AppState {
   licStepSize: number;
   licKernelLength: number;
   arrowSpacing: number;
+  placementMode: FieldElement['type'] | null;
 }

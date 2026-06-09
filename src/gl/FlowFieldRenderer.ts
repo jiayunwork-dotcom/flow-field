@@ -11,15 +11,19 @@ import {
   TRAIL_FADE_FS,
   DISPLAY_FS,
   COLORMAP_FS,
+  STREAMLINE_VS,
+  STREAMLINE_FS,
 } from './shaders';
 import { ColormapManager } from './ColormapManager';
 import type { FieldElement, PresetField, CustomField, GlobalParams, VectorFieldData } from '../store/types';
+import { createCustomFieldTexture } from '../fields/ExpressionParser';
 
 export class FlowFieldRenderer {
   private ctx: GLContext;
   private gl: WebGL2RenderingContext;
   private colormaps: ColormapManager;
   private quadVAO: WebGLVertexArrayObject;
+  private particleVAO: WebGLVertexArrayObject;
 
   private fieldProgram: WebGLProgram;
   private particleUpdateProgram: WebGLProgram;
@@ -30,10 +34,12 @@ export class FlowFieldRenderer {
   private trailFadeProgram: WebGLProgram;
   private displayProgram: WebGLProgram;
   private colormapProgram: WebGLProgram;
+  private streamlineProgram: WebGLProgram;
 
   private fieldTexture: WebGLTexture | null = null;
   private fieldFBO: WebGLFramebuffer | null = null;
   private importedTexture: WebGLTexture | null = null;
+  private customFieldTexture: WebGLTexture | null = null;
 
   private posTextures: [WebGLTexture | null, WebGLTexture | null] = [null, null];
   private posFBOs: [WebGLFramebuffer | null, WebGLFramebuffer | null] = [null, null];
@@ -43,10 +49,16 @@ export class FlowFieldRenderer {
 
   private trailTexture: WebGLTexture | null = null;
   private trailFBO: WebGLFramebuffer | null = null;
+  private trailTempTexture: WebGLTexture | null = null;
+  private trailTempFBO: WebGLFramebuffer | null = null;
 
   private licTexture: WebGLTexture | null = null;
   private licFBO: WebGLFramebuffer | null = null;
   private licNoiseTexture: WebGLTexture | null = null;
+
+  private streamlineVBO: WebGLBuffer | null = null;
+  private streamlineSpeedVBO: WebGLBuffer | null = null;
+  private streamlineVertCount = 0;
 
   private width = 1024;
   private height = 1024;
@@ -64,6 +76,9 @@ export class FlowFieldRenderer {
     const { vao } = ctx.setupFullscreenQuad();
     this.quadVAO = vao;
 
+    const pVAO = ctx.gl.createVertexArray()!;
+    this.particleVAO = pVAO;
+
     const p = (vs: string, fs: string) => {
       const prog = ctx.createProgram(vs, fs);
       if (!prog) throw new Error(`Failed to compile shader program`);
@@ -79,6 +94,10 @@ export class FlowFieldRenderer {
     this.trailFadeProgram = p(QUAD_VS, TRAIL_FADE_FS);
     this.displayProgram = p(QUAD_VS, DISPLAY_FS);
     this.colormapProgram = p(QUAD_VS, COLORMAP_FS);
+    this.streamlineProgram = p(STREAMLINE_VS, STREAMLINE_FS);
+
+    this.streamlineVBO = this.gl.createBuffer();
+    this.streamlineSpeedVBO = this.gl.createBuffer();
 
     this.initNoiseTexture();
     this.recreateTextures();
@@ -123,10 +142,21 @@ export class FlowFieldRenderer {
     this.trailTexture = ctx.createTexture(w, h, null, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.LINEAR);
     this.trailFBO = ctx.createFBO(this.trailTexture!);
 
+    ctx.deleteTexture(this.trailTempTexture);
+    ctx.deleteFBO(this.trailTempFBO);
+    this.trailTempTexture = ctx.createTexture(w, h, null, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.LINEAR);
+    this.trailTempFBO = ctx.createFBO(this.trailTempTexture!);
+
     ctx.deleteTexture(this.licTexture);
     ctx.deleteFBO(this.licFBO);
     this.licTexture = ctx.createTexture(w, h, null);
     this.licFBO = ctx.createFBO(this.licTexture!);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.trailFBO);
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
     this.createParticleTextures();
     this.needsParticleReset = true;
@@ -169,6 +199,28 @@ export class FlowFieldRenderer {
     }
   }
 
+  updateCustomFieldTexture(customFields: CustomField[]) {
+    const { gl, ctx } = this;
+    const w = gl.canvas.width;
+    const h = gl.canvas.height;
+
+    ctx.deleteTexture(this.customFieldTexture);
+    this.customFieldTexture = null;
+
+    const activeCustom = customFields.filter(f => f.active);
+    if (activeCustom.length === 0) return;
+
+    const combined = new Float32Array(w * h * 4);
+    for (const cf of activeCustom) {
+      const fieldData = createCustomFieldTexture(cf.formulaX, cf.formulaY, w, h);
+      for (let i = 0; i < w * h; i++) {
+        combined[i * 4 + 0] += fieldData[i * 2];
+        combined[i * 4 + 1] += fieldData[i * 2 + 1];
+      }
+    }
+    this.customFieldTexture = ctx.createTexture(w, h, combined);
+  }
+
   render(params: {
     elements: FieldElement[];
     presetFields: PresetField[];
@@ -193,6 +245,8 @@ export class FlowFieldRenderer {
     this.frameCount++;
 
     this.setParticleCount(params.globalParams.particleCount);
+
+    this.updateCustomFieldTexture(params.customFields);
 
     this.computeField(params);
 
@@ -225,6 +279,10 @@ export class FlowFieldRenderer {
 
     if (params.showParticles) {
       this.renderParticles(params.globalParams, params.colorRange);
+    }
+
+    if (params.showStreamlines) {
+      this.renderStreamlines(params.colorRange, params.globalParams.colormap, params.globalParams.integrationStep);
     }
 
     if (params.operationMode !== 'none') {
@@ -260,6 +318,17 @@ export class FlowFieldRenderer {
       gl.uniform1i(gl.getUniformLocation(this.fieldProgram, 'u_importedTexture'), 0);
     }
 
+    const hasCustom = params.customFields.some(f => f.active) && this.customFieldTexture;
+    gl.uniform1i(gl.getUniformLocation(this.fieldProgram, 'u_customCount'), hasCustom ? 1 : 0);
+    if (hasCustom && this.customFieldTexture) {
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.customFieldTexture);
+      gl.uniform1i(gl.getUniformLocation(this.fieldProgram, 'u_customFieldTexture'), 2);
+    }
+    const customActiveData = new Float32Array(4);
+    if (hasCustom) customActiveData[0] = 1.0;
+    gl.uniform1fv(gl.getUniformLocation(this.fieldProgram, 'u_customActive'), customActiveData);
+
     const elemCount = Math.min(params.elements.length, 16);
     gl.uniform1i(gl.getUniformLocation(this.fieldProgram, 'u_elementCount'), elemCount);
     const elemData = new Float32Array(16 * 4);
@@ -282,26 +351,15 @@ export class FlowFieldRenderer {
     const formulaTypes = new Int32Array(5);
     const formulaTypeMap: Record<string, number> = { uniform: 0, rotation: 1, divergence: 2, dipole: 3, saddle: 4 };
     for (let i = 0; i < presetCount; i++) {
-      const p = params.presetFields[i];
-      presetData[i * 4 + 0] = p.active ? 1.0 : 0.0;
-      presetData[i * 4 + 1] = Object.values(p.params)[0] ?? 1.0;
+      const pr = params.presetFields[i];
+      presetData[i * 4 + 0] = pr.active ? 1.0 : 0.0;
+      presetData[i * 4 + 1] = Object.values(pr.params)[0] ?? 1.0;
       presetData[i * 4 + 2] = 0;
       presetData[i * 4 + 3] = 0;
-      formulaTypes[i] = formulaTypeMap[p.id] ?? 0;
+      formulaTypes[i] = formulaTypeMap[pr.id] ?? 0;
     }
     gl.uniform4fv(gl.getUniformLocation(this.fieldProgram, 'u_presets'), presetData);
     gl.uniform1iv(gl.getUniformLocation(this.fieldProgram, 'u_presetFormulaType'), formulaTypes);
-
-    const customCount = Math.min(params.customFields.length, 4);
-    gl.uniform1i(gl.getUniformLocation(this.fieldProgram, 'u_customCount'), customCount);
-    const customParamData = new Float32Array(4 * 4);
-    const customActiveData = new Float32Array(4);
-    for (let i = 0; i < customCount; i++) {
-      const c = params.customFields[i];
-      customActiveData[i] = c.active ? 1.0 : 0.0;
-    }
-    gl.uniform4fv(gl.getUniformLocation(this.fieldProgram, 'u_customParams'), customParamData);
-    gl.uniform1fv(gl.getUniformLocation(this.fieldProgram, 'u_customActive'), customActiveData);
 
     gl.bindVertexArray(this.quadVAO);
     ctx.drawFullscreenQuad();
@@ -368,23 +426,30 @@ export class FlowFieldRenderer {
     this.currentPosIdx = writeIdx;
     this.needsParticleReset = false;
 
-    // Fade trail
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.trailFBO);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.trailTempFBO);
     gl.viewport(0, 0, w, h);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ZERO, gl.SRC_ALPHA);
     gl.useProgram(this.trailFadeProgram);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.trailTexture);
+    gl.uniform1i(gl.getUniformLocation(this.trailFadeProgram, 'u_trailTexture'), 0);
     const fadeAmount = 1.0 - 1.0 / globalParams.trailLength;
     gl.uniform1f(gl.getUniformLocation(this.trailFadeProgram, 'u_fadeAmount'), fadeAmount);
     gl.bindVertexArray(this.quadVAO);
     ctx.drawFullscreenQuad();
-    gl.disable(gl.BLEND);
 
-    // Draw particles on trail
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.trailFBO);
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(this.displayProgram);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.trailTempTexture);
+    gl.uniform1i(gl.getUniformLocation(this.displayProgram, 'u_texture'), 0);
+    gl.bindVertexArray(this.quadVAO);
+    ctx.drawFullscreenQuad();
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.trailFBO);
     gl.viewport(0, 0, w, h);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
     gl.useProgram(this.particlePointProgram);
 
     gl.activeTexture(gl.TEXTURE0);
@@ -401,14 +466,13 @@ export class FlowFieldRenderer {
     gl.uniform1i(gl.getUniformLocation(this.particlePointProgram, 'u_colormapTexture'), 2);
 
     gl.uniform2f(gl.getUniformLocation(this.particlePointProgram, 'u_textureSize'), tw, th);
-    gl.uniform1f(gl.getUniformLocation(this.particlePointProgram, 'u_pointSize'), 1.5);
+    gl.uniform1f(gl.getUniformLocation(this.particlePointProgram, 'u_pointSize'), 3.0);
     gl.uniform2f(gl.getUniformLocation(this.particlePointProgram, 'u_colormapRange'), colorRange.min, colorRange.max);
 
-    gl.bindVertexArray(this.quadVAO);
+    gl.bindVertexArray(this.particleVAO);
     gl.drawArrays(gl.POINTS, 0, tw * th);
     gl.disable(gl.BLEND);
 
-    // Display trail to screen
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, w, h);
     gl.enable(gl.BLEND);
@@ -420,6 +484,120 @@ export class FlowFieldRenderer {
     gl.bindVertexArray(this.quadVAO);
     ctx.drawFullscreenQuad();
     gl.disable(gl.BLEND);
+  }
+
+  private renderStreamlines(colorRange: { min: number; max: number }, colormap: string, stepSize: number) {
+    const { gl } = this;
+    const w = gl.canvas.width;
+    const h = gl.canvas.height;
+
+    this.computeStreamlineGeometry(w, h, stepSize);
+
+    if (this.streamlineVertCount < 2) return;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(this.streamlineProgram);
+
+    const cmapTex = this.colormaps.getTexture(colormap as any);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, cmapTex);
+    gl.uniform1i(gl.getUniformLocation(this.streamlineProgram, 'u_colormapTexture'), 0);
+    gl.uniform2f(gl.getUniformLocation(this.streamlineProgram, 'u_colormapRange'), colorRange.min, colorRange.max);
+
+    gl.bindVertexArray(this.particleVAO);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.streamlineVBO);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.streamlineSpeedVBO);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.LINE_STRIP, 0, this.streamlineVertCount);
+
+    gl.disableVertexAttribArray(1);
+    gl.disable(gl.BLEND);
+  }
+
+  private computeStreamlineGeometry(w: number, h: number, stepSize: number) {
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.fieldFBO);
+    const pixels = new Float32Array(w * h * 4);
+    this.gl.readPixels(0, 0, w, h, this.gl.RGBA, this.gl.FLOAT, pixels);
+
+    const sampleField = (nx: number, ny: number): [number, number] => {
+      const ux = (nx + 1) * 0.5;
+      const uy = (ny + 1) * 0.5;
+      const px = Math.floor(ux * w);
+      const py = Math.floor(uy * h);
+      if (px < 0 || px >= w || py < 0 || py >= h) return [0, 0];
+      const idx = py * w + px;
+      return [pixels[idx * 4], pixels[idx * 4 + 1]];
+    };
+
+    const rk4 = (px: number, py: number, dt: number): [number, number] => {
+      const [k1x, k1y] = sampleField(px, py);
+      const [k2x, k2y] = sampleField(px + k1x * dt * 0.5, py + k1y * dt * 0.5);
+      const [k3x, k3y] = sampleField(px + k2x * dt * 0.5, py + k2y * dt * 0.5);
+      const [k4x, k4y] = sampleField(px + k3x * dt, py + k3y * dt);
+      return [
+        px + (k1x + 2 * k2x + 2 * k3x + k4x) * dt / 6,
+        py + (k1y + 2 * k2y + 2 * k3y + k4y) * dt / 6,
+      ];
+    };
+
+    const spacing = 50;
+    const aspect = w / h;
+    const positions: number[] = [];
+    const speeds: number[] = [];
+    const maxSteps = 200;
+
+    for (let sy = spacing / 2; sy < h; sy += spacing) {
+      for (let sx = spacing / 2; sx < w; sx += spacing) {
+        const nx0 = (sx / w) * 2 - 1;
+        const ny0 = (sy / h) * 2 - 1;
+
+        let px = nx0 * aspect;
+        let py = ny0;
+        const startX = px;
+        const startY = py;
+
+        for (let step = 0; step < maxSteps; step++) {
+          const [vx, vy] = sampleField(px, py);
+          const mag = Math.sqrt(vx * vx + vy * vy);
+          if (mag < 0.0001) break;
+
+          positions.push(px, py);
+          speeds.push(mag);
+
+          const dt = stepSize * 2.0;
+          const [npx, npy] = rk4(px, py, dt);
+          px = npx;
+          py = npy;
+
+          if (px < -aspect || px > aspect || py < -1 || py > 1) break;
+        }
+
+        positions.push(NaN, NaN);
+        speeds.push(0);
+      }
+    }
+
+    this.streamlineVertCount = positions.length / 2;
+
+    const posData = new Float32Array(positions);
+    const spdData = new Float32Array(speeds);
+
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.streamlineVBO);
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, posData, this.gl.DYNAMIC_DRAW);
+
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.streamlineSpeedVBO);
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, spdData, this.gl.DYNAMIC_DRAW);
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
   }
 
   private computeLIC(stepSize: number, kernelLength: number) {
@@ -580,5 +758,8 @@ export class FlowFieldRenderer {
     this.ctx.deleteProgram(this.trailFadeProgram);
     this.ctx.deleteProgram(this.displayProgram);
     this.ctx.deleteProgram(this.colormapProgram);
+    this.ctx.deleteProgram(this.streamlineProgram);
+    if (this.streamlineVBO) this.gl.deleteBuffer(this.streamlineVBO);
+    if (this.streamlineSpeedVBO) this.gl.deleteBuffer(this.streamlineSpeedVBO);
   }
 }
