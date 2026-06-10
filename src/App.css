@@ -121,7 +121,7 @@ body {
   flex-shrink: 0;
   background: #12121c;
   border-top: 1px solid #2a2a3a;
-  height: 80px;
+  height: 120px;
   display: flex;
   flex-direction: column;
 }
@@ -224,4 +224,109 @@ select {
 
 button:hover {
   filter: brightness(1.2);
+}
+
+.timeline-speed-select {
+  background: #2a2a3a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ddd;
+  padding: 2px 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.timeline-speed-select:focus {
+  outline: 1px solid #5a8aba;
+}
+
+.timeline-selection-info {
+  font-size: 10px;
+  color: #ffd93d;
+  margin-left: 4px;
+  font-family: monospace;
+}
+
+.loop-clear-btn {
+  font-size: 10px !important;
+  padding: 2px 6px !important;
+  background: #2a2a4a !important;
+  border-color: #4a4a8a !important;
+  color: #aaf !important;
+}
+
+.timeline-bookmarks-list {
+  display: flex;
+  gap: 4px;
+  padding: 2px 12px 4px;
+  overflow-x: auto;
+  flex-shrink: 0;
+  border-top: 1px solid #1e1e2e;
+}
+
+.timeline-bookmarks-list::-webkit-scrollbar {
+  height: 4px;
+}
+
+.timeline-bookmarks-list::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 2px;
+}
+
+.bookmark-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.bookmark-name {
+  font-size: 10px;
+  color: #8af;
+  cursor: pointer;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bookmark-name:hover {
+  color: #aaf;
+  text-decoration: underline;
+}
+
+.bookmark-time {
+  font-size: 9px;
+  color: #666;
+  font-family: monospace;
+}
+
+.bookmark-delete-btn {
+  background: none !important;
+  border: none !important;
+  color: #666;
+  cursor: pointer;
+  font-size: 9px;
+  padding: 0 2px !important;
+  line-height: 1;
+}
+
+.bookmark-delete-btn:hover {
+  color: #f66 !important;
+}
+
+.bookmark-rename-input {
+  background: #111;
+  color: #ddd;
+  border: 1px solid #4d96ff;
+  border-radius: 2px;
+  padding: 1px 4px;
+  font-size: 10px;
+  width: 80px;
+  outline: none;
 }

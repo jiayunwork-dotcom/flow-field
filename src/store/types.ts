@@ -128,6 +128,26 @@ export interface AnnotationKeyframe {
   y: number;
 }
 
+export interface AnnotationTemplate {
+  id: string;
+  name: string;
+  type: 'arrow' | 'text' | 'region';
+  color: AnnotationColor;
+  lineWidth?: number;
+  fontSize?: number;
+}
+
+export interface Bookmark {
+  id: string;
+  name: string;
+  time: number;
+}
+
+export interface LoopRegion {
+  start: number;
+  end: number;
+}
+
 export type AnnotationMode = null | 'arrow' | 'text' | 'region' | 'select';
 
 export const SCENE_VERSION = 1;
@@ -192,6 +212,13 @@ export interface AppState {
   timelineCurrentTime: number;
   timelineRecording: boolean;
   timelinePlaying: boolean;
+  timelinePlaybackSpeed: number;
+  timelineLoopRegion: LoopRegion | null;
+  selectedKeyframeIds: string[];
+  copiedKeyframes: Keyframe[];
+  bookmarks: Bookmark[];
+  annotationTemplates: AnnotationTemplate[];
+  activeTemplateId: string | null;
 
   annotations: Annotation[];
   annotationKeyframes: AnnotationKeyframe[];

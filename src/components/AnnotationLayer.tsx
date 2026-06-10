@@ -56,6 +56,8 @@ export function AnnotationLayer() {
   const annotationMode = useAppStore((s) => s.annotationMode);
   const selectedAnnotationId = useAppStore((s) => s.selectedAnnotationId);
   const currentTime = useAppStore((s) => s.timelineCurrentTime);
+  const annotationTemplates = useAppStore((s) => s.annotationTemplates);
+  const activeTemplateId = useAppStore((s) => s.activeTemplateId);
   const addAnnotation = useAppStore((s) => s.addAnnotation);
   const selectAnnotation = useAppStore((s) => s.selectAnnotation);
   const updateAnnotation = useAppStore((s) => s.updateAnnotation);
@@ -332,6 +334,7 @@ export function AnnotationLayer() {
       if (d.type === 'arrow') {
         const dist = Math.sqrt((d.currentX - d.startX) ** 2 + (d.currentY - d.startY) ** 2);
         if (dist > 5) {
+          const activeTpl = activeTemplateId ? annotationTemplates.find((t) => t.id === activeTemplateId) : null;
           const ann: ArrowAnnotation = {
             id: genAnnId(),
             type: 'arrow',
@@ -339,8 +342,8 @@ export function AnnotationLayer() {
             startY: d.startY,
             endX: d.currentX,
             endY: d.currentY,
-            color: ANNOTATION_COLORS[0],
-            lineWidth: 2,
+            color: (activeTpl && activeTpl.type === 'arrow') ? activeTpl.color : ANNOTATION_COLORS[0],
+            lineWidth: (activeTpl && activeTpl.type === 'arrow' && activeTpl.lineWidth) ? activeTpl.lineWidth : 2,
             timeStart: null,
             timeEnd: null,
           };
@@ -351,6 +354,7 @@ export function AnnotationLayer() {
         const rw = Math.abs(d.currentX - d.startX);
         const rh = Math.abs(d.currentY - d.startY);
         if (rw > 5 && rh > 5) {
+          const activeTpl = activeTemplateId ? annotationTemplates.find((t) => t.id === activeTemplateId) : null;
           const ann: RegionAnnotation = {
             id: genAnnId(),
             type: 'region',
@@ -358,8 +362,8 @@ export function AnnotationLayer() {
             y: Math.min(d.startY, d.currentY),
             width: rw,
             height: rh,
-            color: ANNOTATION_COLORS[0],
-            lineWidth: 2,
+            color: (activeTpl && activeTpl.type === 'region') ? activeTpl.color : ANNOTATION_COLORS[0],
+            lineWidth: (activeTpl && activeTpl.type === 'region' && activeTpl.lineWidth) ? activeTpl.lineWidth : 2,
             label: '',
             timeStart: null,
             timeEnd: null,
@@ -373,7 +377,7 @@ export function AnnotationLayer() {
       setAnnotationMode('select');
     }
     dragRef.current = null;
-  }, [addAnnotation, selectAnnotation, setAnnotationMode, drawAnnotations]);
+  }, [addAnnotation, selectAnnotation, setAnnotationMode, drawAnnotations, activeTemplateId, annotationTemplates]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     const [cx, cy] = screenToCanvas(e.clientX, e.clientY);
@@ -390,14 +394,15 @@ export function AnnotationLayer() {
 
   const handleTextSubmit = useCallback(() => {
     if (textInput.visible && textInputRef.current?.value.trim()) {
+      const activeTpl = activeTemplateId ? annotationTemplates.find((t) => t.id === activeTemplateId) : null;
       const ann: TextAnnotation = {
         id: genAnnId(),
         type: 'text',
         x: textInput.canvasX,
         y: textInput.canvasY,
         text: textInputRef.current.value.trim(),
-        fontSize: 16,
-        color: ANNOTATION_COLORS[0],
+        fontSize: (activeTpl && activeTpl.type === 'text' && activeTpl.fontSize) ? activeTpl.fontSize : 16,
+        color: (activeTpl && activeTpl.type === 'text') ? activeTpl.color : ANNOTATION_COLORS[0],
         timeStart: null,
         timeEnd: null,
       };
@@ -407,7 +412,7 @@ export function AnnotationLayer() {
     }
     setTextInput((p) => ({ ...p, visible: false }));
     textInputRef.current = null;
-  }, [textInput, addAnnotation, selectAnnotation, setAnnotationMode]);
+  }, [textInput, addAnnotation, selectAnnotation, setAnnotationMode, activeTemplateId, annotationTemplates]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

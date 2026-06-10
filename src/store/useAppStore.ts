@@ -16,6 +16,9 @@ import type {
   Annotation,
   AnnotationKeyframe,
   AnnotationMode,
+  AnnotationTemplate,
+  Bookmark,
+  LoopRegion,
   ExternalFieldRef,
   SceneData,
 } from './types';
@@ -78,6 +81,13 @@ interface AppStore extends AppState {
   setTimelineCurrentTime: (t: number) => void;
   setTimelineRecording: (r: boolean) => void;
   setTimelinePlaying: (p: boolean) => void;
+  setTimelinePlaybackSpeed: (speed: number) => void;
+  setTimelineLoopRegion: (region: LoopRegion | null) => void;
+  setSelectedKeyframeIds: (ids: string[]) => void;
+  setCopiedKeyframes: (kfs: Keyframe[]) => void;
+  removeTimelineKeyframes: (ids: string[]) => void;
+  moveTimelineKeyframes: (idToDelta: Record<string, number>) => void;
+  addTimelineKeyframes: (kfs: Keyframe[]) => void;
   addTimelineKeyframe: (kf: Keyframe) => void;
   removeTimelineKeyframe: (id: string) => void;
   moveTimelineKeyframe: (id: string, newTime: number) => void;
@@ -85,6 +95,14 @@ interface AppStore extends AppState {
   captureFieldSnapshot: () => FieldSnapshot;
   restoreFieldSnapshot: (snap: FieldSnapshot) => void;
   interpolateAndRestore: (time: number) => void;
+
+  addBookmark: (bookmark: Bookmark) => void;
+  removeBookmark: (id: string) => void;
+  renameBookmark: (id: string, name: string) => void;
+
+  addAnnotationTemplate: (template: AnnotationTemplate) => void;
+  removeAnnotationTemplate: (id: string) => void;
+  setActiveTemplateId: (id: string | null) => void;
 
   addAnnotation: (a: Annotation) => void;
   updateAnnotation: (id: string, updates: Partial<Annotation>) => void;
@@ -336,6 +354,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   timelineCurrentTime: 0,
   timelineRecording: false,
   timelinePlaying: false,
+  timelinePlaybackSpeed: 1,
+  timelineLoopRegion: null,
+  selectedKeyframeIds: [],
+  copiedKeyframes: [],
+  bookmarks: [],
+  annotationTemplates: [],
+  activeTemplateId: null,
 
   annotations: [],
   annotationKeyframes: [],
@@ -533,6 +558,39 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setTimelinePlaying: (p) => set({ timelinePlaying: p }),
 
+  setTimelinePlaybackSpeed: (speed) => set({ timelinePlaybackSpeed: speed }),
+
+  setTimelineLoopRegion: (region) => set({ timelineLoopRegion: region }),
+
+  setSelectedKeyframeIds: (ids) => set({ selectedKeyframeIds: ids }),
+
+  setCopiedKeyframes: (kfs) => set({ copiedKeyframes: kfs }),
+
+  removeTimelineKeyframes: (ids) =>
+    set((s) => {
+      const idSet = new Set(ids);
+      const kfs = s.timelineKeyframes.filter((k) => !idSet.has(k.id));
+      let newDuration = s.timelineDuration;
+      if (kfs.length === 0) newDuration = 30;
+      return { timelineKeyframes: kfs, selectedKeyframeIds: [], timelineDuration: newDuration };
+    }),
+
+  moveTimelineKeyframes: (idToDelta) =>
+    set((s) => ({
+      timelineKeyframes: s.timelineKeyframes
+        .map((k) => {
+          const delta = idToDelta[k.id];
+          if (delta === undefined) return k;
+          return { ...k, time: Math.max(0, Math.min(s.timelineDuration, k.time + delta)) };
+        })
+        .sort((a, b) => a.time - b.time),
+    })),
+
+  addTimelineKeyframes: (kfs) =>
+    set((s) => ({
+      timelineKeyframes: [...s.timelineKeyframes, ...kfs].sort((a, b) => a.time - b.time),
+    })),
+
   addTimelineKeyframe: (kf) =>
     set((s) => ({
       timelineKeyframes: [...s.timelineKeyframes, kf].sort((a, b) => a.time - b.time),
@@ -622,6 +680,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const interpolated = interpolateFieldSnapshot(prev.fieldSnapshot, next.fieldSnapshot, t);
     s.restoreFieldSnapshot(interpolated);
   },
+
+  addBookmark: (bookmark) =>
+    set((s) => ({ bookmarks: [...s.bookmarks, bookmark] })),
+
+  removeBookmark: (id) =>
+    set((s) => ({ bookmarks: s.bookmarks.filter((b) => b.id !== id) })),
+
+  renameBookmark: (id, name) =>
+    set((s) => ({
+      bookmarks: s.bookmarks.map((b) => (b.id === id ? { ...b, name } : b)),
+    })),
+
+  addAnnotationTemplate: (template) =>
+    set((s) => ({ annotationTemplates: [...s.annotationTemplates, template] })),
+
+  removeAnnotationTemplate: (id) =>
+    set((s) => ({
+      annotationTemplates: s.annotationTemplates.filter((t) => t.id !== id),
+      activeTemplateId: s.activeTemplateId === id ? null : s.activeTemplateId,
+    })),
+
+  setActiveTemplateId: (id) => set({ activeTemplateId: id }),
 
   addAnnotation: (a) =>
     set((s) => ({ annotations: [...s.annotations, a] })),
