@@ -8,6 +8,9 @@ import { ElementPanel } from './components/ElementPanel';
 import { ImportPanel } from './components/ImportPanel';
 import { ExportPanel } from './components/ExportPanel';
 import { UndoRedoPanel } from './components/UndoRedoPanel';
+import { AnnotationPanel } from './components/AnnotationPanel';
+import { AnnotationLayer } from './components/AnnotationLayer';
+import { Timeline } from './components/Timeline';
 import { useAppStore } from './store/useAppStore';
 import './App.css';
 
@@ -59,6 +62,10 @@ function App() {
             <ParamsPanel />
           </Section>
 
+          <Section title="标注图层">
+            <AnnotationPanel />
+          </Section>
+
           <Section title="数据导入">
             <ImportPanel />
           </Section>
@@ -69,9 +76,13 @@ function App() {
         </div>
       </aside>
 
-      <main className="canvas-area">
-        <Canvas />
-      </main>
+      <div className="canvas-area">
+        <div className="canvas-wrapper">
+          <Canvas />
+          <AnnotationLayer />
+        </div>
+        <Timeline />
+      </div>
     </div>
   );
 }

@@ -103,9 +103,93 @@ body {
 .canvas-area {
   flex: 1;
   display: flex;
+  flex-direction: column;
+  background: #06060c;
+  overflow: hidden;
+}
+
+.canvas-wrapper {
+  flex: 1;
+  display: flex;
   align-items: center;
   justify-content: center;
-  background: #06060c;
+  position: relative;
+  overflow: hidden;
+}
+
+.timeline-container {
+  flex-shrink: 0;
+  background: #12121c;
+  border-top: 1px solid #2a2a3a;
+  height: 80px;
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-bottom: 1px solid #1e1e2e;
+  flex-shrink: 0;
+}
+
+.timeline-btn {
+  background: #2a2a3a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ddd;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.timeline-btn:hover {
+  filter: brightness(1.2);
+}
+
+.timeline-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.timeline-btn.recording {
+  background: #4a1a1a;
+  border-color: #9a3a3a;
+  color: #ff6b6b;
+  animation: pulse-rec 1s infinite;
+}
+
+.timeline-btn.playing {
+  background: #1a3a1a;
+  border-color: #3a6a3a;
+  color: #6bcb77;
+}
+
+@keyframes pulse-rec {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.timeline-time-display {
+  font-family: monospace;
+  font-size: 11px;
+  color: #8af;
+  margin-left: 8px;
+}
+
+.timeline-kf-count {
+  font-size: 10px;
+  color: #666;
+  margin-left: 4px;
+}
+
+.timeline-track-area {
+  flex: 1;
+  cursor: default;
+  user-select: none;
   overflow: hidden;
 }
 

@@ -64,6 +64,90 @@ export interface ProbeInfo {
   magnitude: number;
 }
 
+export interface FieldSnapshot {
+  fieldElements: FieldElement[];
+  presetFields: PresetField[];
+  customFields: CustomField[];
+}
+
+export interface Keyframe {
+  id: string;
+  time: number;
+  fieldSnapshot: FieldSnapshot;
+}
+
+export const ANNOTATION_COLORS = ['#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff', '#ff922b', '#cc5de8'] as const;
+export type AnnotationColor = (typeof ANNOTATION_COLORS)[number];
+
+export interface ArrowAnnotation {
+  id: string;
+  type: 'arrow';
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  color: AnnotationColor;
+  lineWidth: number;
+  timeStart: number | null;
+  timeEnd: number | null;
+}
+
+export interface TextAnnotation {
+  id: string;
+  type: 'text';
+  x: number;
+  y: number;
+  text: string;
+  fontSize: number;
+  color: AnnotationColor;
+  timeStart: number | null;
+  timeEnd: number | null;
+}
+
+export interface RegionAnnotation {
+  id: string;
+  type: 'region';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: AnnotationColor;
+  lineWidth: number;
+  label: string;
+  timeStart: number | null;
+  timeEnd: number | null;
+}
+
+export type Annotation = ArrowAnnotation | TextAnnotation | RegionAnnotation;
+
+export interface AnnotationKeyframe {
+  id: string;
+  annotationId: string;
+  time: number;
+  x: number;
+  y: number;
+}
+
+export type AnnotationMode = null | 'arrow' | 'text' | 'region' | 'select';
+
+export const SCENE_VERSION = 1;
+
+export interface ExternalFieldRef {
+  filePath: string;
+  sampleParams?: Record<string, unknown>;
+}
+
+export interface SceneData {
+  version: number;
+  timeline: {
+    duration: number;
+    keyframes: Keyframe[];
+  };
+  annotations: Annotation[];
+  annotationKeyframes: AnnotationKeyframe[];
+  externalFieldRefs: ExternalFieldRef[];
+}
+
 export interface PerfStats {
   activeParticles: number;
   drawCalls: number;
@@ -102,4 +186,17 @@ export interface AppState {
   snapshotField: VectorFieldData | null;
   perfPanelExpanded: boolean;
   perfStats: PerfStats;
+
+  timelineDuration: number;
+  timelineKeyframes: Keyframe[];
+  timelineCurrentTime: number;
+  timelineRecording: boolean;
+  timelinePlaying: boolean;
+
+  annotations: Annotation[];
+  annotationKeyframes: AnnotationKeyframe[];
+  selectedAnnotationId: string | null;
+  annotationMode: AnnotationMode;
+  externalFieldRefs: ExternalFieldRef[];
+  missingExternalRefs: string[];
 }

@@ -11,7 +11,15 @@ import type {
   TimeSeriesData,
   ProbeInfo,
   PerfStats,
+  Keyframe,
+  FieldSnapshot,
+  Annotation,
+  AnnotationKeyframe,
+  AnnotationMode,
+  ExternalFieldRef,
+  SceneData,
 } from './types';
+import { SCENE_VERSION } from './types';
 
 interface HistoryEntry {
   fieldElements: FieldElement[];
@@ -65,6 +73,33 @@ interface AppStore extends AppState {
   redo: () => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
+
+  setTimelineDuration: (d: number) => void;
+  setTimelineCurrentTime: (t: number) => void;
+  setTimelineRecording: (r: boolean) => void;
+  setTimelinePlaying: (p: boolean) => void;
+  addTimelineKeyframe: (kf: Keyframe) => void;
+  removeTimelineKeyframe: (id: string) => void;
+  moveTimelineKeyframe: (id: string, newTime: number) => void;
+  insertManualKeyframe: () => void;
+  captureFieldSnapshot: () => FieldSnapshot;
+  restoreFieldSnapshot: (snap: FieldSnapshot) => void;
+  interpolateAndRestore: (time: number) => void;
+
+  addAnnotation: (a: Annotation) => void;
+  updateAnnotation: (id: string, updates: Partial<Annotation>) => void;
+  removeAnnotation: (id: string) => void;
+  selectAnnotation: (id: string | null) => void;
+  setAnnotationMode: (mode: AnnotationMode) => void;
+  addAnnotationKeyframe: (kf: AnnotationKeyframe) => void;
+  removeAnnotationKeyframe: (id: string) => void;
+  updateAnnotationKeyframe: (id: string, updates: Partial<AnnotationKeyframe>) => void;
+  insertAnnotationPositionFrame: (annotationId: string) => void;
+
+  exportScene: () => SceneData;
+  importScene: (data: unknown) => { success: boolean; errors: string[] };
+  setExternalFieldRefs: (refs: ExternalFieldRef[]) => void;
+  setMissingExternalRefs: (refs: string[]) => void;
 }
 
 const DEFAULT_PRESETS: PresetField[] = [
@@ -134,7 +169,119 @@ function pushHistory(state: AppState) {
   historyIndex = historyStack.length - 1;
 }
 
-export const useAppStore = create<AppStore>((set, _get) => ({
+let _nextKfId = 1;
+function genKfId() { return `kf_${_nextKfId++}_${Date.now()}`; }
+
+function interpolateFieldSnapshot(a: FieldSnapshot, b: FieldSnapshot, t: number): FieldSnapshot {
+  const elements: FieldElement[] = [];
+  const byIdA = new Map(a.fieldElements.map((e) => [e.id, e]));
+  const byIdB = new Map(b.fieldElements.map((e) => [e.id, e]));
+  const allIds = new Set([...byIdA.keys(), ...byIdB.keys()]);
+  for (const id of allIds) {
+    const ea = byIdA.get(id);
+    const eb = byIdB.get(id);
+    if (ea && eb) {
+      elements.push({
+        ...ea,
+        x: ea.x + (eb.x - ea.x) * t,
+        y: ea.y + (eb.y - ea.y) * t,
+        strength: ea.strength + (eb.strength - ea.strength) * t,
+        angle: ea.angle !== undefined && eb.angle !== undefined
+          ? ea.angle + (eb.angle - ea.angle) * t
+          : ea.angle ?? eb.angle,
+        rate: ea.rate !== undefined && eb.rate !== undefined
+          ? ea.rate + (eb.rate - ea.rate) * t
+          : ea.rate ?? eb.rate,
+        spreadAngle: ea.spreadAngle !== undefined && eb.spreadAngle !== undefined
+          ? ea.spreadAngle + (eb.spreadAngle - ea.spreadAngle) * t
+          : ea.spreadAngle ?? eb.spreadAngle,
+        initialSpeed: ea.initialSpeed !== undefined && eb.initialSpeed !== undefined
+          ? ea.initialSpeed + (eb.initialSpeed - ea.initialSpeed) * t
+          : ea.initialSpeed ?? eb.initialSpeed,
+      });
+    } else {
+      elements.push(JSON.parse(JSON.stringify(ea ?? eb)));
+    }
+  }
+
+  const presetFields: PresetField[] = a.presetFields.map((pf) => {
+    const bf = b.presetFields.find((f) => f.id === pf.id);
+    if (!bf) return JSON.parse(JSON.stringify(pf));
+    return {
+      ...pf,
+      active: t >= 0.5 ? bf.active : pf.active,
+      params: Object.fromEntries(
+        Object.keys(pf.params).map((k) => [k, pf.params[k] + ((bf.params[k] ?? pf.params[k]) - pf.params[k]) * t])
+      ),
+    };
+  });
+
+  const customFields: CustomField[] = a.customFields.map((cf) => {
+    const bf = b.customFields.find((f) => f.id === cf.id);
+    if (!bf) return JSON.parse(JSON.stringify(cf));
+    return { ...cf, active: t >= 0.5 ? bf.active : cf.active };
+  });
+
+  return { fieldElements: elements, presetFields, customFields };
+}
+
+function validateSceneData(data: unknown): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!data || typeof data !== 'object') {
+    errors.push('数据不是有效的JSON对象');
+    return { valid: false, errors };
+  }
+  const d = data as Record<string, unknown>;
+  if (typeof d.version !== 'number') {
+    errors.push('缺少必需字段 "version" 或类型错误 (应为 number)');
+  }
+  if (!d.timeline || typeof d.timeline !== 'object') {
+    errors.push('缺少必需字段 "timeline" 或类型错误 (应为 object)');
+  } else {
+    const tl = d.timeline as Record<string, unknown>;
+    if (typeof tl.duration !== 'number') {
+      errors.push('timeline.duration 缺少或类型错误 (应为 number)');
+    }
+    if (!Array.isArray(tl.keyframes)) {
+      errors.push('timeline.keyframes 缺少或类型错误 (应为 array)');
+    } else {
+      tl.keyframes.forEach((kf: unknown, i: number) => {
+        if (!kf || typeof kf !== 'object') {
+          errors.push(`timeline.keyframes[${i}] 不是有效对象`);
+        } else {
+          const k = kf as Record<string, unknown>;
+          if (typeof k.time !== 'number') errors.push(`timeline.keyframes[${i}].time 缺少或类型错误`);
+          if (!k.fieldSnapshot || typeof k.fieldSnapshot !== 'object') {
+            errors.push(`timeline.keyframes[${i}].fieldSnapshot 缺少或类型错误`);
+          }
+        }
+      });
+    }
+  }
+  if (!Array.isArray(d.annotations)) {
+    errors.push('缺少必需字段 "annotations" 或类型错误 (应为 array)');
+  } else {
+    (d.annotations as unknown[]).forEach((a: unknown, i: number) => {
+      if (!a || typeof a !== 'object') {
+        errors.push(`annotations[${i}] 不是有效对象`);
+      } else {
+        const ann = a as Record<string, unknown>;
+        if (!['arrow', 'text', 'region'].includes(ann.type as string)) {
+          errors.push(`annotations[${i}].type 无效: "${String(ann.type)}"`);
+        }
+      }
+    });
+  }
+  if (d.annotationKeyframes !== undefined && !Array.isArray(d.annotationKeyframes)) {
+    errors.push('annotationKeyframes 类型错误 (应为 array)');
+  }
+  if (d.externalFieldRefs !== undefined && !Array.isArray(d.externalFieldRefs)) {
+    errors.push('externalFieldRefs 类型错误 (应为 array)');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+export const useAppStore = create<AppStore>((set, get) => ({
   fieldElements: [],
   presetFields: DEFAULT_PRESETS,
   customFields: [],
@@ -183,6 +330,19 @@ export const useAppStore = create<AppStore>((set, _get) => ({
     fieldTextureRes: [1024, 1024],
     particleTexSize: [256, 256],
   },
+
+  timelineDuration: 30,
+  timelineKeyframes: [],
+  timelineCurrentTime: 0,
+  timelineRecording: false,
+  timelinePlaying: false,
+
+  annotations: [],
+  annotationKeyframes: [],
+  selectedAnnotationId: null,
+  annotationMode: null,
+  externalFieldRefs: [],
+  missingExternalRefs: [],
 
   addElement: (element) =>
     set((s) => {
@@ -364,6 +524,235 @@ export const useAppStore = create<AppStore>((set, _get) => ({
 
   canUndo: () => historyIndex > 0,
   canRedo: () => historyIndex < historyStack.length - 1,
+
+  setTimelineDuration: (d) => set({ timelineDuration: Math.max(1, Math.min(120, d)) }),
+
+  setTimelineCurrentTime: (t) => set({ timelineCurrentTime: Math.max(0, Math.min(get().timelineDuration, t)) }),
+
+  setTimelineRecording: (r) => set({ timelineRecording: r }),
+
+  setTimelinePlaying: (p) => set({ timelinePlaying: p }),
+
+  addTimelineKeyframe: (kf) =>
+    set((s) => ({
+      timelineKeyframes: [...s.timelineKeyframes, kf].sort((a, b) => a.time - b.time),
+    })),
+
+  removeTimelineKeyframe: (id) =>
+    set((s) => {
+      const kfs = s.timelineKeyframes.filter((k) => k.id !== id);
+      let newDuration = s.timelineDuration;
+      if (kfs.length > 0) {
+        const minT = kfs[0].time;
+        const maxT = kfs[kfs.length - 1].time;
+        if (s.timelineCurrentTime < minT) set({ timelineCurrentTime: minT });
+        if (s.timelineCurrentTime > maxT) set({ timelineCurrentTime: maxT });
+      }
+      if (kfs.length === 0) {
+        newDuration = 30;
+      }
+      return { timelineKeyframes: kfs, timelineDuration: newDuration };
+    }),
+
+  moveTimelineKeyframe: (id, newTime) =>
+    set((s) => ({
+      timelineKeyframes: s.timelineKeyframes
+        .map((k) => (k.id === id ? { ...k, time: Math.max(0, Math.min(s.timelineDuration, newTime)) } : k))
+        .sort((a, b) => a.time - b.time),
+    })),
+
+  insertManualKeyframe: () => {
+    const s = get();
+    if (s.timelinePlaying) return;
+    const snap = get().captureFieldSnapshot();
+    const kf: Keyframe = {
+      id: genKfId(),
+      time: s.timelineCurrentTime,
+      fieldSnapshot: snap,
+    };
+    set((st) => ({
+      timelineKeyframes: [...st.timelineKeyframes, kf].sort((a, b) => a.time - b.time),
+    }));
+  },
+
+  captureFieldSnapshot: () => {
+    const s = get();
+    return {
+      fieldElements: JSON.parse(JSON.stringify(s.fieldElements)),
+      presetFields: JSON.parse(JSON.stringify(s.presetFields)),
+      customFields: JSON.parse(JSON.stringify(s.customFields)),
+    };
+  },
+
+  restoreFieldSnapshot: (snap) => {
+    set({
+      fieldElements: JSON.parse(JSON.stringify(snap.fieldElements)),
+      presetFields: JSON.parse(JSON.stringify(snap.presetFields)),
+      customFields: JSON.parse(JSON.stringify(snap.customFields)),
+      licDirty: true,
+    });
+  },
+
+  interpolateAndRestore: (time) => {
+    const s = get();
+    const kfs = s.timelineKeyframes;
+    if (kfs.length === 0) return;
+
+    if (time <= kfs[0].time) {
+      s.restoreFieldSnapshot(kfs[0].fieldSnapshot);
+      return;
+    }
+    if (time >= kfs[kfs.length - 1].time) {
+      s.restoreFieldSnapshot(kfs[kfs.length - 1].fieldSnapshot);
+      return;
+    }
+
+    let prev = kfs[0];
+    let next = kfs[kfs.length - 1];
+    for (let i = 0; i < kfs.length - 1; i++) {
+      if (time >= kfs[i].time && time <= kfs[i + 1].time) {
+        prev = kfs[i];
+        next = kfs[i + 1];
+        break;
+      }
+    }
+
+    const span = next.time - prev.time;
+    const t = span > 0 ? (time - prev.time) / span : 0;
+    const interpolated = interpolateFieldSnapshot(prev.fieldSnapshot, next.fieldSnapshot, t);
+    s.restoreFieldSnapshot(interpolated);
+  },
+
+  addAnnotation: (a) =>
+    set((s) => ({ annotations: [...s.annotations, a] })),
+
+  updateAnnotation: (id, updates) =>
+    set((s) => ({
+      annotations: s.annotations.map((a) =>
+        a.id === id ? { ...a, ...updates } as Annotation : a
+      ),
+    })),
+
+  removeAnnotation: (id) =>
+    set((s) => ({
+      annotations: s.annotations.filter((a) => a.id !== id),
+      annotationKeyframes: s.annotationKeyframes.filter((k) => k.annotationId !== id),
+      selectedAnnotationId: s.selectedAnnotationId === id ? null : s.selectedAnnotationId,
+    })),
+
+  selectAnnotation: (id) => set({ selectedAnnotationId: id }),
+
+  setAnnotationMode: (mode) => set({ annotationMode: mode }),
+
+  addAnnotationKeyframe: (kf) =>
+    set((s) => ({
+      annotationKeyframes: [...s.annotationKeyframes, kf].sort((a, b) => a.time - b.time),
+    })),
+
+  removeAnnotationKeyframe: (id) =>
+    set((s) => ({
+      annotationKeyframes: s.annotationKeyframes.filter((k) => k.id !== id),
+    })),
+
+  updateAnnotationKeyframe: (id, updates) =>
+    set((s) => ({
+      annotationKeyframes: s.annotationKeyframes.map((k) =>
+        k.id === id ? { ...k, ...updates } : k
+      ),
+    })),
+
+  insertAnnotationPositionFrame: (annotationId) => {
+    const s = get();
+    const ann = s.annotations.find((a) => a.id === annotationId);
+    if (!ann) return;
+    let x: number, y: number;
+    if (ann.type === 'arrow') {
+      x = (ann.startX + ann.endX) / 2;
+      y = (ann.startY + ann.endY) / 2;
+    } else if (ann.type === 'region') {
+      x = ann.x + ann.width / 2;
+      y = ann.y + ann.height / 2;
+    } else {
+      x = ann.x;
+      y = ann.y;
+    }
+    const kf: AnnotationKeyframe = {
+      id: genKfId(),
+      annotationId,
+      time: s.timelineCurrentTime,
+      x,
+      y,
+    };
+    set((st) => ({
+      annotationKeyframes: [...st.annotationKeyframes, kf].sort((a, b) => a.time - b.time),
+    }));
+  },
+
+  exportScene: () => {
+    const s = get();
+    return {
+      version: SCENE_VERSION,
+      timeline: {
+        duration: s.timelineDuration,
+        keyframes: s.timelineKeyframes,
+      },
+      annotations: s.annotations,
+      annotationKeyframes: s.annotationKeyframes,
+      externalFieldRefs: s.externalFieldRefs,
+    };
+  },
+
+  importScene: (data: unknown) => {
+    const validation = validateSceneData(data);
+    if (!validation.valid) {
+      return { success: false, errors: validation.errors };
+    }
+    const d = data as SceneData;
+    if (d.version > SCENE_VERSION) {
+      return { success: false, errors: [`场景版本 ${d.version} 高于当前版本 ${SCENE_VERSION}，无法导入`] };
+    }
+
+    let migratedData = d;
+    if (d.version < SCENE_VERSION) {
+      migratedData = {
+        ...d,
+        version: SCENE_VERSION,
+        annotationKeyframes: d.annotationKeyframes ?? [],
+        externalFieldRefs: d.externalFieldRefs ?? [],
+      };
+    }
+
+    const missing: string[] = [];
+    if (migratedData.externalFieldRefs) {
+      for (const ref of migratedData.externalFieldRefs) {
+        missing.push(ref.filePath);
+      }
+    }
+
+    set({
+      timelineDuration: migratedData.timeline.duration,
+      timelineKeyframes: migratedData.timeline.keyframes,
+      timelineCurrentTime: 0,
+      timelineRecording: false,
+      timelinePlaying: false,
+      annotations: migratedData.annotations,
+      annotationKeyframes: migratedData.annotationKeyframes,
+      externalFieldRefs: migratedData.externalFieldRefs ?? [],
+      missingExternalRefs: missing,
+      selectedAnnotationId: null,
+      licDirty: true,
+    });
+
+    if (migratedData.timeline.keyframes.length > 0) {
+      get().restoreFieldSnapshot(migratedData.timeline.keyframes[0].fieldSnapshot);
+    }
+
+    return { success: true, errors: [] };
+  },
+
+  setExternalFieldRefs: (refs) => set({ externalFieldRefs: refs }),
+
+  setMissingExternalRefs: (refs) => set({ missingExternalRefs: refs }),
 }));
 
 const initialState = useAppStore.getState();
