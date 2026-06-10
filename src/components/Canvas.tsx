@@ -6,11 +6,12 @@ import type { FieldElement } from '../store/types';
 let nextId = 1;
 function genId() { return `el_${nextId++}_${Date.now()}`; }
 
-const ELEMENT_DEFAULTS: Record<FieldElement['type'], { strength: number; angle?: number }> = {
+const ELEMENT_DEFAULTS: Record<FieldElement['type'], { strength: number; angle?: number; rate?: number; spreadAngle?: number; initialSpeed?: number }> = {
   source: { strength: 0.5 },
   sink: { strength: 0.5 },
   vortex: { strength: 0.5 },
   uniform: { strength: 0.3, angle: 0 },
+  emitter: { strength: 0, rate: 100, spreadAngle: 30, initialSpeed: 1.0, angle: 0 },
 };
 
 export function Canvas() {
@@ -21,6 +22,8 @@ export function Canvas() {
   const fpsDisplayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const probeDragRef = useRef(false);
+  const splitDragRef = useRef(false);
   const stateRef = useRef(useAppStore.getState());
 
   useEffect(() => {
@@ -34,7 +37,9 @@ export function Canvas() {
   const updateElement = useAppStore((s) => s.updateElement);
   const removeElement = useAppStore((s) => s.removeElement);
   const selectElement = useAppStore((s) => s.selectElement);
-  const setPlacementMode = useAppStore((s) => s.setPlacementMode);
+  const setProbePoint = useAppStore((s) => s.setProbePoint);
+  const setCompareSplit = useAppStore((s) => s.setCompareSplit);
+  const setPerfStats = useAppStore((s) => s.setPerfStats);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -78,6 +83,8 @@ export function Canvas() {
         showStreamlines: s.visualizationModes.streamlines,
         showLIC: s.visualizationModes.lic,
         showVorticity: s.visualizationModes.vorticity,
+        showHeatmap: s.visualizationModes.heatmap,
+        heatmapOpacity: s.heatmapOpacity,
         operationMode: s.operationMode,
         colorRange: s.colorRange,
         operationRange: s.operationRange,
@@ -86,6 +93,10 @@ export function Canvas() {
         licKernelLength: s.licKernelLength,
         arrowSpacing: s.arrowSpacing,
         importedField: s.importedField,
+        probePoint: s.probePoint,
+        probeMode: s.probeMode,
+        compareMode: s.compareMode,
+        compareSplit: s.compareSplit,
       });
 
       if (s.licDirty) useAppStore.getState().clearLicDirty();
@@ -98,6 +109,24 @@ export function Canvas() {
           }
         } catch {}
       }
+
+      if (s.probeMode && s.probePoint) {
+        try {
+          const info = renderer.getProbeVelocity(s.probePoint);
+          useAppStore.getState().setProbeInfo(info);
+        } catch {}
+      }
+
+      try {
+        const [tw, th] = renderer.getParticleTexSize();
+        const canvas = renderer.getCanvas();
+        setPerfStats({
+          activeParticles: tw * th,
+          drawCalls: renderer.getDrawCallCount(),
+          fieldTextureRes: [canvas.width, canvas.height] as [number, number],
+          particleTexSize: [tw, th] as [number, number],
+        });
+      } catch {}
 
       const now = performance.now();
       fpsRef.current.frames++;
@@ -145,9 +174,41 @@ export function Canvas() {
     return closest;
   }, []);
 
+  const isNearProbe = useCallback((nx: number, ny: number): boolean => {
+    const probe = useAppStore.getState().probePoint;
+    if (!probe) return false;
+    const dx = probe.x - nx;
+    const dy = probe.y - ny;
+    return Math.sqrt(dx * dx + dy * dy) < 0.05;
+  }, []);
+
+  const isNearSplitLine = useCallback((clientX: number): boolean => {
+    const canvas = canvasRef.current;
+    if (!canvas) return false;
+    const state = useAppStore.getState();
+    if (!state.compareMode) return false;
+    const rect = canvas.getBoundingClientRect();
+    const splitScreenX = rect.left + state.compareSplit * rect.width;
+    return Math.abs(clientX - splitScreenX) < 10;
+  }, []);
+
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const [nx, ny] = screenToNorm(e.clientX, e.clientY);
     const state = useAppStore.getState();
+
+    if (state.compareMode && isNearSplitLine(e.clientX)) {
+      splitDragRef.current = true;
+      return;
+    }
+
+    if (state.probeMode) {
+      if (isNearProbe(nx, ny)) {
+        probeDragRef.current = true;
+      } else {
+        setProbePoint({ x: nx, y: ny });
+      }
+      return;
+    }
 
     if (e.button === 2) {
       e.preventDefault();
@@ -165,6 +226,9 @@ export function Canvas() {
         y: ny,
         strength: defaults.strength,
         angle: defaults.angle,
+        rate: defaults.rate,
+        spreadAngle: defaults.spreadAngle,
+        initialSpeed: defaults.initialSpeed,
       };
       addElement(el);
       selectElement(el.id);
@@ -178,19 +242,36 @@ export function Canvas() {
     } else {
       selectElement(null);
     }
-  }, [screenToNorm, findElementAt, removeElement, selectElement, addElement, setPlacementMode]);
+  }, [screenToNorm, findElementAt, removeElement, selectElement, addElement, setProbePoint, isNearProbe, isNearSplitLine]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (splitDragRef.current) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const split = Math.max(0.1, Math.min(0.9, (e.clientX - rect.left) / rect.width));
+      setCompareSplit(split);
+      return;
+    }
+
+    if (probeDragRef.current) {
+      const [nx, ny] = screenToNorm(e.clientX, e.clientY);
+      setProbePoint({ x: nx, y: ny });
+      return;
+    }
+
     if (!dragRef.current) return;
     const [nx, ny] = screenToNorm(e.clientX, e.clientY);
     updateElement(dragRef.current.id, {
       x: nx - dragRef.current.offsetX,
       y: ny - dragRef.current.offsetY,
     });
-  }, [screenToNorm, updateElement]);
+  }, [screenToNorm, updateElement, setProbePoint, setCompareSplit]);
 
   const handleMouseUp = useCallback(() => {
     dragRef.current = null;
+    probeDragRef.current = false;
+    splitDragRef.current = false;
   }, []);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -198,6 +279,18 @@ export function Canvas() {
   }, []);
 
   const placementMode = useAppStore((s) => s.placementMode);
+  const probeMode = useAppStore((s) => s.probeMode);
+  const probeInfo = useAppStore((s) => s.probeInfo);
+  const perfPanelExpanded = useAppStore((s) => s.perfPanelExpanded);
+  const perfStats = useAppStore((s) => s.perfStats);
+  const setPerfPanelExpanded = useAppStore((s) => s.setPerfPanelExpanded);
+
+  const getCursor = () => {
+    if (placementMode) return 'crosshair';
+    if (probeMode) return 'crosshair';
+    if (useAppStore.getState().compareMode) return 'default';
+    return 'default';
+  };
 
   return (
     <div ref={containerRef} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
@@ -211,7 +304,7 @@ export function Canvas() {
           width: 1024,
           height: 1024,
           background: '#0a0a12',
-          cursor: placementMode ? 'crosshair' : 'default',
+          cursor: getCursor(),
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -236,6 +329,64 @@ export function Canvas() {
       >
         0 FPS
       </div>
+
+      <div
+        style={{
+          position: 'absolute',
+          top: 28,
+          right: 8,
+          background: 'rgba(0,0,0,0.6)',
+          borderRadius: 3,
+          fontSize: 10,
+          fontFamily: 'monospace',
+          color: '#8a8',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          onClick={() => setPerfPanelExpanded(!perfPanelExpanded)}
+          style={{
+            padding: '2px 6px',
+            cursor: 'pointer',
+            userSelect: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <span style={{ fontSize: 8 }}>{perfPanelExpanded ? '▾' : '▸'}</span>
+          <span>性能</span>
+        </div>
+        {perfPanelExpanded && (
+          <div style={{ padding: '2px 6px 4px', display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <div>粒子数: {perfStats.activeParticles.toLocaleString()}</div>
+            <div>Draw Calls: {perfStats.drawCalls}</div>
+            <div>场纹理: {perfStats.fieldTextureRes[0]}×{perfStats.fieldTextureRes[1]}</div>
+            <div>粒子纹理: {perfStats.particleTexSize[0]}×{perfStats.particleTexSize[1]}</div>
+          </div>
+        )}
+      </div>
+
+      {probeMode && probeInfo && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 8,
+            left: 8,
+            background: 'rgba(0,0,0,0.7)',
+            padding: '4px 8px',
+            borderRadius: 4,
+            fontFamily: 'monospace',
+            fontSize: 11,
+            color: '#fff',
+          }}
+        >
+          <div style={{ color: '#8af', marginBottom: 2 }}>探针信息</div>
+          <div>vx: {probeInfo.vx.toFixed(4)}</div>
+          <div>vy: {probeInfo.vy.toFixed(4)}</div>
+          <div>|v|: {probeInfo.magnitude.toFixed(4)}</div>
+        </div>
+      )}
     </div>
   );
 }

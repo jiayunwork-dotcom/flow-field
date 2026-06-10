@@ -1,10 +1,13 @@
 export interface FieldElement {
   id: string;
-  type: 'source' | 'sink' | 'vortex' | 'uniform';
+  type: 'source' | 'sink' | 'vortex' | 'uniform' | 'emitter';
   x: number;
   y: number;
   strength: number;
   angle?: number;
+  rate?: number;
+  spreadAngle?: number;
+  initialSpeed?: number;
 }
 
 export interface PresetField {
@@ -32,7 +35,7 @@ export interface VectorFieldData {
   data: Float32Array;
 }
 
-export type VisualizationMode = 'arrows' | 'particles' | 'streamlines' | 'lic' | 'vorticity';
+export type VisualizationMode = 'arrows' | 'particles' | 'streamlines' | 'lic' | 'vorticity' | 'heatmap';
 export type OperationMode = 'none' | 'divergence' | 'curl' | 'gradient';
 export type ColormapName = 'viridis' | 'magma' | 'inferno' | 'plasma' | 'turbo';
 
@@ -53,6 +56,19 @@ export interface TimeSeriesFrame {
 export interface TimeSeriesData {
   frames: TimeSeriesFrame[];
   timestamps: number[];
+}
+
+export interface ProbeInfo {
+  vx: number;
+  vy: number;
+  magnitude: number;
+}
+
+export interface PerfStats {
+  activeParticles: number;
+  drawCalls: number;
+  fieldTextureRes: [number, number];
+  particleTexSize: [number, number];
 }
 
 export interface AppState {
@@ -77,4 +93,13 @@ export interface AppState {
   licKernelLength: number;
   arrowSpacing: number;
   placementMode: FieldElement['type'] | null;
+  heatmapOpacity: number;
+  probeMode: boolean;
+  probePoint: { x: number; y: number } | null;
+  probeInfo: ProbeInfo | null;
+  compareMode: boolean;
+  compareSplit: number;
+  snapshotField: VectorFieldData | null;
+  perfPanelExpanded: boolean;
+  perfStats: PerfStats;
 }

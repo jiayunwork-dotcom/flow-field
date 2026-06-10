@@ -2,7 +2,6 @@ import { useCallback, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 
 export function ExportPanel() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const recordingRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 

@@ -87,8 +87,6 @@ export function parseVTK(text: string): VectorFieldData {
 
   lineIdx++;
   let dimensions: [number, number, number] = [1, 1, 1];
-  let spacing: [number, number, number] = [1, 1, 1];
-  let origin: [number, number, number] = [0, 0, 0];
 
   while (lineIdx < lines.length) {
     const line = lines[lineIdx].trim();
@@ -96,11 +94,9 @@ export function parseVTK(text: string): VectorFieldData {
       const parts = line.split(/\s+/);
       dimensions = [parseInt(parts[1]), parseInt(parts[2]), parseInt(parts[3])];
     } else if (line.startsWith('SPACING')) {
-      const parts = line.split(/\s+/);
-      spacing = [parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3])];
+      // spacing parsed and discarded
     } else if (line.startsWith('ORIGIN')) {
-      const parts = line.split(/\s+/);
-      origin = [parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3])];
+      // origin parsed and discarded
     } else if (line.includes('POINT_DATA')) {
       break;
     }
@@ -116,7 +112,6 @@ export function parseVTK(text: string): VectorFieldData {
   const gridH = dimensions[1];
   const totalPoints = gridW * gridH * dimensions[2];
 
-  const data = new Float32Array(gridW * gridH * 2);
   const values: number[] = [];
 
   while (lineIdx < lines.length && values.length < totalPoints * 3) {

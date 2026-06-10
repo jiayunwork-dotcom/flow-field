@@ -52,6 +52,7 @@ vec2 evalElement(int idx, vec2 p) {
     vec2 center = u_elements[idx].xy;
     int etype = int(u_elements[idx].z + 0.5);
     float strength = u_elements[idx].w;
+    if (etype == 4) return vec2(0.0);
     vec2 d = p - center;
     float r2 = dot(d, d) + 0.001;
     if (etype == 0) return d * strength / r2;
@@ -100,12 +101,18 @@ void main() {
 
 export const PARTICLE_UPDATE_FS = COMMON_HEADER + `
 uniform sampler2D u_positionTexture;
+uniform sampler2D u_velocityTexture;
 uniform sampler2D u_fieldTexture;
 uniform vec2 u_resolution;
 uniform float u_dt;
 uniform float u_speedScale;
 uniform float u_time;
 uniform float u_resetPass;
+
+uniform int u_emitterCount;
+uniform vec4 u_emitters[8];
+uniform float u_emitterDir[8];
+uniform float u_emitterFraction;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -116,12 +123,12 @@ vec2 sampleField(vec2 p) {
     return texture(u_fieldTexture, uv).xy;
 }
 
-vec2 rk4(vec2 p, float dt) {
-    vec2 k1 = sampleField(p);
-    vec2 k2 = sampleField(p + k1 * dt * 0.5);
-    vec2 k3 = sampleField(p + k2 * dt * 0.5);
-    vec2 k4 = sampleField(p + k3 * dt);
-    return p + (k1 + 2.0*k2 + 2.0*k3 + k4) * dt / 6.0;
+vec2 rk4(vec2 p, float dt, vec2 emitterVel, float decay) {
+    vec2 v1 = sampleField(p) + emitterVel * decay;
+    vec2 v2 = sampleField(p + v1 * dt * 0.5) + emitterVel * decay;
+    vec2 v3 = sampleField(p + v2 * dt * 0.5) + emitterVel * decay;
+    vec2 v4 = sampleField(p + v3 * dt) + emitterVel * decay;
+    return p + (v1 + 2.0*v2 + 2.0*v3 + v4) * dt / 6.0;
 }
 
 float hash(vec2 p) {
@@ -136,15 +143,99 @@ void main() {
     float life = data.z;
     float maxLife = data.w;
 
+    vec4 velData = texture(u_velocityTexture, v_uv);
+    vec2 emitterVel = velData.xy;
+    float isEmitter = velData.a;
+
     if (u_resetPass > 0.5 || life >= maxLife || pos.x < -1.0 || pos.x > 1.0 || pos.y < -1.0 || pos.y > 1.0) {
-        float r1 = hash(v_uv + u_time * 0.013);
-        float r2 = hash(v_uv * 1.7 + u_time * 0.037);
-        float r3 = hash(v_uv * 3.1 + u_time * 0.071);
-        float newMaxLife = 200.0 + r3 * 200.0;
-        fragColor = vec4(r1 * 2.0 - 1.0, r2 * 2.0 - 1.0, 0.0, newMaxLife);
+        float r0 = hash(v_uv + u_time * 0.007);
+        if (u_emitterCount > 0 && r0 < u_emitterFraction) {
+            float r1 = hash(v_uv * 1.3 + u_time * 0.013);
+            float r2 = hash(v_uv * 2.7 + u_time * 0.029);
+            float r3 = hash(v_uv * 3.1 + u_time * 0.071);
+            float r4 = hash(v_uv * 4.3 + u_time * 0.053);
+
+            int eidx = int(r1 * float(u_emitterCount));
+            if (eidx >= u_emitterCount) eidx = u_emitterCount - 1;
+
+            vec2 epos = u_emitters[eidx].xy;
+            float espread = u_emitters[eidx].z;
+            float espeed = u_emitters[eidx].w;
+            float edir = u_emitterDir[eidx];
+
+            float halfSpread = espread * 0.5;
+            float angle = edir + (r2 - 0.5) * espread;
+            float offset = r3 * 0.01;
+            vec2 spawnPos = epos + vec2(cos(angle), sin(angle)) * offset;
+
+            float velAngle = edir + (r2 - 0.5) * espread;
+            vec2 spawnVel = vec2(cos(velAngle), sin(velAngle)) * espeed;
+
+            float newMaxLife = 100.0 + r4 * 200.0;
+            fragColor = vec4(spawnPos, 0.0, newMaxLife);
+        } else {
+            float r1 = hash(v_uv + u_time * 0.013);
+            float r2 = hash(v_uv * 1.7 + u_time * 0.037);
+            float r3 = hash(v_uv * 3.1 + u_time * 0.071);
+            float newMaxLife = 200.0 + r3 * 200.0;
+            fragColor = vec4(r1 * 2.0 - 1.0, r2 * 2.0 - 1.0, 0.0, newMaxLife);
+        }
     } else {
-        vec2 newPos = rk4(pos, u_dt * u_speedScale);
+        float decay = isEmitter * exp(-life * 0.05);
+        vec2 newPos = rk4(pos, u_dt * u_speedScale, emitterVel, decay);
         fragColor = vec4(newPos, life + 1.0, maxLife);
+    }
+}
+`;
+
+export const VELOCITY_UPDATE_FS = COMMON_HEADER + `
+uniform sampler2D u_velocityTexture;
+uniform sampler2D u_positionTexture;
+uniform float u_time;
+uniform float u_resetPass;
+uniform int u_emitterCount;
+uniform vec4 u_emitters[8];
+uniform float u_emitterDir[8];
+uniform float u_emitterFraction;
+
+in vec2 v_uv;
+out vec4 fragColor;
+
+float hash(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+void main() {
+    vec4 data = texture(u_positionTexture, v_uv);
+    vec2 pos = data.xy;
+    float life = data.z;
+    float maxLife = data.w;
+    vec4 velData = texture(u_velocityTexture, v_uv);
+
+    if (u_resetPass > 0.5 || life >= maxLife || pos.x < -1.0 || pos.x > 1.0 || pos.y < -1.0 || pos.y > 1.0) {
+        float r0 = hash(v_uv + u_time * 0.007);
+        if (u_emitterCount > 0 && r0 < u_emitterFraction) {
+            float r1 = hash(v_uv * 1.3 + u_time * 0.013);
+            float r2 = hash(v_uv * 2.7 + u_time * 0.029);
+
+            int eidx = int(r1 * float(u_emitterCount));
+            if (eidx >= u_emitterCount) eidx = u_emitterCount - 1;
+
+            float espread = u_emitters[eidx].z;
+            float espeed = u_emitters[eidx].w;
+            float edir = u_emitterDir[eidx];
+
+            float velAngle = edir + (r2 - 0.5) * espread;
+            vec2 spawnVel = vec2(cos(velAngle), sin(velAngle)) * espeed;
+
+            fragColor = vec4(spawnVel, 0.0, 1.0);
+        } else {
+            fragColor = vec4(0.0, 0.0, 0.0, 0.0);
+        }
+    } else {
+        fragColor = velData;
     }
 }
 `;
@@ -334,6 +425,23 @@ void main() {
 }
 `;
 
+export const HEATMAP_FS = COMMON_HEADER + `
+uniform sampler2D u_fieldTexture;
+uniform sampler2D u_colormapTexture;
+uniform vec2 u_colormapRange;
+uniform float u_opacity;
+in vec2 v_uv;
+out vec4 fragColor;
+
+void main() {
+    vec2 vel = texture(u_fieldTexture, v_uv).xy;
+    float mag = length(vel);
+    float t = clamp((mag - u_colormapRange.x) / (u_colormapRange.y - u_colormapRange.x + 0.0001), 0.0, 1.0);
+    vec3 color = texture(u_colormapTexture, vec2(t, 0.5)).rgb;
+    fragColor = vec4(color, u_opacity);
+}
+`;
+
 export const LIC_FS = COMMON_HEADER + `
 uniform sampler2D u_fieldTexture;
 uniform sampler2D u_noiseTexture;
@@ -402,5 +510,42 @@ void main() {
     float t = clamp((v_speed - u_colormapRange.x) / (u_colormapRange.y - u_colormapRange.x + 0.0001), 0.0, 1.0);
     vec3 color = texture(u_colormapTexture, vec2(t, 0.5)).rgb;
     fragColor = vec4(color, v_alpha * 0.9);
+}
+`;
+
+export const PROBE_LINE_VS = COMMON_HEADER + `
+in vec2 a_position;
+out float v_alpha;
+void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_alpha = 1.0;
+}
+`;
+
+export const PROBE_LINE_FS = COMMON_HEADER + `
+in float v_alpha;
+out vec4 fragColor;
+void main() {
+    fragColor = vec4(1.0, 1.0, 1.0, v_alpha);
+}
+`;
+
+export const PROBE_POINT_VS = COMMON_HEADER + `
+uniform vec2 u_probePos;
+uniform float u_pointSize;
+void main() {
+    gl_Position = vec4(u_probePos, 0.0, 1.0);
+    gl_PointSize = u_pointSize;
+}
+`;
+
+export const PROBE_POINT_FS = COMMON_HEADER + `
+out vec4 fragColor;
+void main() {
+    vec2 coord = gl_PointCoord - 0.5;
+    float dist = length(coord);
+    if (dist > 0.5) discard;
+    float alpha = smoothstep(0.5, 0.3, dist);
+    fragColor = vec4(1.0, 1.0, 1.0, alpha);
 }
 `;

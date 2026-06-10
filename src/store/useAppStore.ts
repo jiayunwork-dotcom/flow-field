@@ -9,6 +9,8 @@ import type {
   ColormapName,
   VectorFieldData,
   TimeSeriesData,
+  ProbeInfo,
+  PerfStats,
 } from './types';
 
 interface HistoryEntry {
@@ -50,6 +52,15 @@ interface AppStore extends AppState {
   setLicParams: (stepSize?: number, kernelLength?: number) => void;
   setArrowSpacing: (spacing: number) => void;
   setPlacementMode: (mode: FieldElement['type'] | null) => void;
+  setHeatmapOpacity: (opacity: number) => void;
+  setProbeMode: (mode: boolean) => void;
+  setProbePoint: (point: { x: number; y: number } | null) => void;
+  setProbeInfo: (info: ProbeInfo | null) => void;
+  setCompareMode: (mode: boolean) => void;
+  setCompareSplit: (split: number) => void;
+  saveSnapshot: (field: VectorFieldData) => void;
+  setPerfPanelExpanded: (expanded: boolean) => void;
+  setPerfStats: (stats: Partial<PerfStats>) => void;
   undo: () => void;
   redo: () => void;
   canUndo: () => boolean;
@@ -123,7 +134,7 @@ function pushHistory(state: AppState) {
   historyIndex = historyStack.length - 1;
 }
 
-export const useAppStore = create<AppStore>((set, get) => ({
+export const useAppStore = create<AppStore>((set, _get) => ({
   fieldElements: [],
   presetFields: DEFAULT_PRESETS,
   customFields: [],
@@ -133,6 +144,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     streamlines: false,
     lic: false,
     vorticity: false,
+    heatmap: false,
   },
   operationMode: 'none',
   globalParams: {
@@ -157,6 +169,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
   licKernelLength: 20,
   arrowSpacing: 30,
   placementMode: null,
+  heatmapOpacity: 0.5,
+  probeMode: false,
+  probePoint: null,
+  probeInfo: null,
+  compareMode: false,
+  compareSplit: 0.5,
+  snapshotField: null,
+  perfPanelExpanded: false,
+  perfStats: {
+    activeParticles: 0,
+    drawCalls: 0,
+    fieldTextureRes: [1024, 1024],
+    particleTexSize: [256, 256],
+  },
 
   addElement: (element) =>
     set((s) => {
@@ -293,6 +319,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setPlacementMode: (mode) => set({ placementMode: mode }),
 
+  setHeatmapOpacity: (opacity) => set({ heatmapOpacity: opacity }),
+
+  setProbeMode: (mode) => set({ probeMode: mode }),
+
+  setProbePoint: (point) => set({ probePoint: point }),
+
+  setProbeInfo: (info) => set({ probeInfo: info }),
+
+  setCompareMode: (mode) => set({ compareMode: mode }),
+
+  setCompareSplit: (split) => set({ compareSplit: split }),
+
+  saveSnapshot: (field) => set({ snapshotField: field }),
+
+  setPerfPanelExpanded: (expanded) => set({ perfPanelExpanded: expanded }),
+
+  setPerfStats: (stats) =>
+    set((s) => ({ perfStats: { ...s.perfStats, ...stats } })),
+
   undo: () => {
     if (historyIndex <= 0) return;
     historyIndex--;
@@ -306,7 +351,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   redo: () => {
-    const state = get();
     if (historyIndex >= historyStack.length - 1) return;
     historyIndex++;
     const entry = historyStack[historyIndex];

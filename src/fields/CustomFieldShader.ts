@@ -1,4 +1,4 @@
-import { COMMON_HEADER, QUAD_VS } from '../gl/shaders';
+import { COMMON_HEADER } from '../gl/shaders';
 
 export function generateCustomFieldFS(formulaX: string, formulaY: string): string | null {
   try {

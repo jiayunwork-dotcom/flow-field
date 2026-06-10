@@ -7,6 +7,7 @@ const ELEMENT_TYPES: Array<{ type: FieldElement['type']; label: string; icon: st
   { type: 'sink', label: '汇点', icon: '⊖', defaultStrength: 0.5 },
   { type: 'vortex', label: '涡旋', icon: '↻', defaultStrength: 0.5 },
   { type: 'uniform', label: '均匀流', icon: '→', defaultStrength: 0.3 },
+  { type: 'emitter', label: '发射器', icon: '喷射', defaultStrength: 0 },
 ];
 
 export function ElementPanel() {
@@ -17,14 +18,22 @@ export function ElementPanel() {
   const selectElement = useAppStore((s) => s.selectElement);
   const placementMode = useAppStore((s) => s.placementMode);
   const setPlacementMode = useAppStore((s) => s.setPlacementMode);
+  const setProbeMode = useAppStore((s) => s.setProbeMode);
+  const probeMode = useAppStore((s) => s.probeMode);
 
   const handleSelectType = useCallback((type: FieldElement['type']) => {
     if (placementMode === type) {
       setPlacementMode(null);
     } else {
       setPlacementMode(type);
+      setProbeMode(false);
     }
-  }, [placementMode, setPlacementMode]);
+  }, [placementMode, setPlacementMode, setProbeMode]);
+
+  const handleToggleProbe = useCallback(() => {
+    setProbeMode(!probeMode);
+    if (!probeMode) setPlacementMode(null);
+  }, [probeMode, setProbeMode, setPlacementMode]);
 
   const selected = fieldElements.find((e) => e.id === selectedElementId);
 
@@ -55,6 +64,24 @@ export function ElementPanel() {
         ))}
       </div>
 
+      <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+        <button
+          onClick={handleToggleProbe}
+          style={{
+            background: probeMode ? '#4a2a2a' : '#2a2a3a',
+            border: `1px solid ${probeMode ? '#ba5a5a' : '#444'}`,
+            borderRadius: 4,
+            color: probeMode ? '#faa' : '#ddd',
+            padding: '4px 8px',
+            cursor: 'pointer',
+            fontSize: 12,
+          }}
+          title="路径探针工具"
+        >
+          🔍 探针
+        </button>
+      </div>
+
       {fieldElements.length > 0 && (
         <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #333', borderRadius: 4, padding: 4 }}>
           {fieldElements.map((el) => (
@@ -73,7 +100,7 @@ export function ElementPanel() {
                 color: '#bbb',
               }}
             >
-              <span>{ELEMENT_TYPES.find((t) => t.type === el.type)?.icon}</span>
+              <span>{ELEMENT_TYPES.find((t) => t.type === el.type)?.icon ?? '?'}</span>
               <span>{el.type} ({el.x.toFixed(2)}, {el.y.toFixed(2)})</span>
               <button
                 onClick={(e) => { e.stopPropagation(); removeElement(el.id); }}
@@ -99,21 +126,23 @@ export function ElementPanel() {
           <div style={{ fontSize: 11, color: '#aaa', marginBottom: 6 }}>
             编辑: {selected.type}
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#bbb' }}>
-            强度: {selected.strength.toFixed(2)}
-            <input
-              type="range"
-              min={-2}
-              max={2}
-              step={0.05}
-              value={selected.strength}
-              onChange={(e) => updateElement(selected.id, { strength: parseFloat(e.target.value) })}
-              style={{ flex: 1 }}
-            />
-          </label>
-          {selected.type === 'uniform' && (
+          {selected.type !== 'emitter' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#bbb' }}>
+              强度: {selected.strength.toFixed(2)}
+              <input
+                type="range"
+                min={-2}
+                max={2}
+                step={0.05}
+                value={selected.strength}
+                onChange={(e) => updateElement(selected.id, { strength: parseFloat(e.target.value) })}
+                style={{ flex: 1 }}
+              />
+            </label>
+          )}
+          {(selected.type === 'uniform' || selected.type === 'emitter') && (
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#bbb', marginTop: 4 }}>
-              角度: {((selected.angle ?? 0) * 180 / Math.PI).toFixed(0)}°
+              方向: {((selected.angle ?? 0) * 180 / Math.PI).toFixed(0)}°
               <input
                 type="range"
                 min={-3.14159}
@@ -124,6 +153,46 @@ export function ElementPanel() {
                 style={{ flex: 1 }}
               />
             </label>
+          )}
+          {selected.type === 'emitter' && (
+            <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#bbb', marginTop: 4 }}>
+                发射速率: {selected.rate ?? 100}/s
+                <input
+                  type="range"
+                  min={10}
+                  max={500}
+                  step={10}
+                  value={selected.rate ?? 100}
+                  onChange={(e) => updateElement(selected.id, { rate: parseInt(e.target.value) })}
+                  style={{ flex: 1 }}
+                />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#bbb', marginTop: 4 }}>
+                扇形张角: {selected.spreadAngle ?? 30}°
+                <input
+                  type="range"
+                  min={0}
+                  max={360}
+                  step={5}
+                  value={selected.spreadAngle ?? 30}
+                  onChange={(e) => updateElement(selected.id, { spreadAngle: parseInt(e.target.value) })}
+                  style={{ flex: 1 }}
+                />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#bbb', marginTop: 4 }}>
+                初始速度: {(selected.initialSpeed ?? 1.0).toFixed(1)}
+                <input
+                  type="range"
+                  min={0.1}
+                  max={5.0}
+                  step={0.1}
+                  value={selected.initialSpeed ?? 1.0}
+                  onChange={(e) => updateElement(selected.id, { initialSpeed: parseFloat(e.target.value) })}
+                  style={{ flex: 1 }}
+                />
+              </label>
+            </>
           )}
           <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
             <label style={{ fontSize: 11, color: '#bbb' }}>

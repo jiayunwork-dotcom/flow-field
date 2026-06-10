@@ -20,6 +20,28 @@ export function ParamsPanel() {
   const licStepSize = useAppStore((s) => s.licStepSize);
   const licKernelLength = useAppStore((s) => s.licKernelLength);
   const setLicParams = useAppStore((s) => s.setLicParams);
+  const compareMode = useAppStore((s) => s.compareMode);
+  const setCompareMode = useAppStore((s) => s.setCompareMode);
+  const compareSplit = useAppStore((s) => s.compareSplit);
+  const setCompareSplit = useAppStore((s) => s.setCompareSplit);
+  const snapshotField = useAppStore((s) => s.snapshotField);
+
+  const handleSaveSnapshot = () => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+    const gl = canvas.getContext('webgl2');
+    if (!gl) return;
+    const w = canvas.width;
+    const h = canvas.height;
+    const pixels = new Float32Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, pixels);
+    const data = new Float32Array(w * h * 2);
+    for (let i = 0; i < w * h; i++) {
+      data[i * 2] = pixels[i * 4];
+      data[i * 2 + 1] = pixels[i * 4 + 1];
+    }
+    useAppStore.getState().saveSnapshot({ width: w, height: h, data });
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -100,6 +122,51 @@ export function ParamsPanel() {
               placeholder="Max"
             />
           </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 6, borderTop: '1px solid #333', paddingTop: 6 }}>
+        <div style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>对比模式</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#bbb' }}>
+          <input type="checkbox" checked={compareMode}
+            onChange={(e) => setCompareMode(e.target.checked)}
+          />
+          启用对比
+        </label>
+        {compareMode && (
+          <>
+            <button
+              onClick={handleSaveSnapshot}
+              style={{
+                marginTop: 4,
+                background: '#2a3a5a',
+                border: '1px solid #4a6a9a',
+                borderRadius: 3,
+                color: '#8af',
+                padding: '3px 8px',
+                cursor: 'pointer',
+                fontSize: 10,
+                width: '100%',
+              }}
+            >
+              保存快照 {snapshotField ? '(已保存)' : ''}
+            </button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#bbb', marginTop: 4 }}>
+              分割: {Math.round(compareSplit * 100)}%
+              <input
+                type="range"
+                min={0.1}
+                max={0.9}
+                step={0.01}
+                value={compareSplit}
+                onChange={(e) => setCompareSplit(parseFloat(e.target.value))}
+                style={{ flex: 1 }}
+              />
+            </label>
+            <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>
+              拖动画布上的分割线可调整比例
+            </div>
+          </>
         )}
       </div>
     </div>
